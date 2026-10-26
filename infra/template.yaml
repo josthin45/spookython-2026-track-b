@@ -1,0 +1,334 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Spookython 2026 Track B. Simulador SEIR de Manta: CloudFront, S3, API Gateway,
+  Lambda orquestador, Step Functions Distributed Map, Lambda simulador,
+  DynamoDB y S3 de resultados. Desplegar en us-east-1.
+
+Parameters:
+  AlertEmail:
+    Type: String
+    Default: ""
+    Description: Correo que recibe la alerta de AWS Budgets desde el día 1. Vacío omite el presupuesto.
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 20
+    MinValue: 1
+    Description: Tope mensual en USD. La alerta salta al 50% del gasto real y al 100% previsto.
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures:
+      - x86_64
+    Timeout: 28
+    MemorySize: 1024
+    Handler: unused.overridden
+    Environment:
+      Variables:
+        JOBS_TABLE: !Ref JobsTable
+        RESULTS_BUCKET: !Ref ResultsBucket
+        CORS_ORIGIN: "*"
+
+Resources:
+  JobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: job_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: job_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+
+  ResultsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: expira-resultados
+            Status: Enabled
+            ExpirationInDays: 14
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  FrontendOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-frontend-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  Api:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "${AWS::StackName}-api"
+      StageName: prod
+      EndpointConfiguration: REGIONAL
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'content-type'"
+        AllowOrigin: "'*'"
+
+  OrchestratorFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: OrchestratorLog
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-orchestrator"
+      CodeUri: ../src
+      Handler: lambdas.orchestrator.handler.handler
+      MemorySize: 1769
+      Timeout: 28
+      Description: Valida parámetros, fija la semilla y corre el escenario o abre el mapa.
+      Environment:
+        Variables:
+          JOBS_TABLE: !Ref JobsTable
+          RESULTS_BUCKET: !Ref ResultsBucket
+          STATE_MACHINE_ARN: !GetAtt MonteCarloMachine.Arn
+          CORS_ORIGIN: "*"
+          SYNC_MAX_RUNS: "30"
+          BATCH_MAX_RUNS: "400"
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref JobsTable
+        - S3CrudPolicy:
+            BucketName: !Ref ResultsBucket
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt MonteCarloMachine.Name
+      Events:
+        Health:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /api/health
+            Method: get
+        Defaults:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /api/defaults
+            Method: get
+        Simulate:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /api/simulate
+            Method: post
+        Job:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /api/jobs/{job_id}
+            Method: get
+
+  OrchestratorLog:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-orchestrator"
+      RetentionInDays: 7
+
+  SimulatorFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: SimulatorLog
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-simulator"
+      CodeUri: ../src
+      Handler: lambdas.simulator.handler.handler
+      MemorySize: 1024
+      Timeout: 60
+      Description: Una corrida SEIR con la estrategia, el azar y no intervenir.
+
+  SimulatorLog:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-simulator"
+      RetentionInDays: 7
+
+  AggregatorFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: AggregatorLog
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-aggregator"
+      CodeUri: ../src
+      Handler: lambdas.aggregator.handler.handler
+      MemorySize: 512
+      Timeout: 120
+      Description: Promedia las corridas del mapa y marca el trabajo como listo.
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref JobsTable
+        - S3CrudPolicy:
+            BucketName: !Ref ResultsBucket
+
+  AggregatorLog:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-aggregator"
+      RetentionInDays: 7
+
+  MonteCarloMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "${AWS::StackName}-montecarlo"
+      DefinitionUri: statemachine.asl.json
+      DefinitionSubstitutions:
+        SimulatorFunctionArn: !GetAtt SimulatorFunction.Arn
+        AggregatorFunctionArn: !GetAtt AggregatorFunction.Arn
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref ResultsBucket
+        - LambdaInvokePolicy:
+            FunctionName: !Ref SimulatorFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref AggregatorFunction
+        - Statement:
+            - Effect: Allow
+              Action:
+                - states:StartExecution
+              Resource: !Sub "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${AWS::StackName}-montecarlo"
+            - Effect: Allow
+              Action:
+                - states:DescribeExecution
+                - states:StopExecution
+              Resource: !Sub "arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:${AWS::StackName}-montecarlo/*"
+
+  Cdn:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub "${AWS::StackName} frontend y API"
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+        DefaultRootObject: index.html
+        Origins:
+          - Id: frontend
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt FrontendOAC.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+          - Id: api
+            DomainName: !Sub "${Api}.execute-api.${AWS::Region}.amazonaws.com"
+            OriginPath: /prod
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+        DefaultCacheBehavior:
+          TargetOriginId: frontend
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - POST
+              - PATCH
+              - DELETE
+            Compress: false
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudFrontRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${FrontendBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Cdn}"
+
+  EventBudget:
+    Type: AWS::Budgets::Budget
+    Condition: HasAlertEmail
+    Properties:
+      Budget:
+        BudgetName: !Sub "${AWS::StackName}-mensual"
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUsd
+          Unit: USD
+        TimeUnit: MONTHLY
+        BudgetType: COST
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 50
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+
+Outputs:
+  PublicUrl:
+    Description: URL pública del Comité de Contención. Sube frontend/dist al bucket antes de abrirla.
+    Value: !Sub "https://${Cdn.DomainName}"
+  ApiUrl:
+    Description: API directa, por si hay que probar sin CloudFront.
+    Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com/prod/api/health"
+  FrontendBucketName:
+    Description: Bucket privado del SPA. aws s3 sync frontend/dist s3://este-bucket
+    Value: !Ref FrontendBucket
+  ResultsBucketName:
+    Value: !Ref ResultsBucket
+  JobsTableName:
+    Value: !Ref JobsTable

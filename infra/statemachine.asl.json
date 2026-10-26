@@ -1,0 +1,48 @@
+{
+  "Comment": "Monte Carlo SEIR. Cada item de runs.jsonl es una corrida con las tres políticas. El mapa distribuido escribe en S3 y el agregador publica el resumen.",
+  "StartAt": "SimularCorridas",
+  "States": {
+    "SimularCorridas": {
+      "Type": "Map",
+      "ItemReader": {
+        "Resource": "arn:aws:states:::s3:getObject",
+        "ReaderConfig": {
+          "InputType": "JSONL"
+        },
+        "Parameters": {
+          "Bucket.$": "$.bucket",
+          "Key.$": "$.runsKey"
+        }
+      },
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "DISTRIBUTED",
+          "ExecutionType": "STANDARD"
+        },
+        "StartAt": "UnaCorrida",
+        "States": {
+          "UnaCorrida": {
+            "Type": "Task",
+            "Resource": "${SimulatorFunctionArn}",
+            "End": true
+          }
+        }
+      },
+      "MaxConcurrency": 20,
+      "ResultWriter": {
+        "Resource": "arn:aws:states:::s3:putObject",
+        "Parameters": {
+          "Bucket.$": "$.bucket",
+          "Prefix.$": "$.resultsPrefix"
+        }
+      },
+      "ResultPath": "$.mapResult",
+      "Next": "Agregar"
+    },
+    "Agregar": {
+      "Type": "Task",
+      "Resource": "${AggregatorFunctionArn}",
+      "End": true
+    }
+  }
+}
