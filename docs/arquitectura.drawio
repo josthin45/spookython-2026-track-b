@@ -1,0 +1,52 @@
+<mxfile host="app.diagrams.net" type="device">
+  <diagram id="track-b" name="Arquitectura Track B">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="user" value="Usuario / jurado&#10;Navegador" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#1c1915;" vertex="1" parent="1">
+          <mxGeometry x="480" y="40" width="200" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="cf" value="CloudFront&#10;HTTPS · SPA y /api" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e7f5ef;strokeColor=#0f6e56;" vertex="1" parent="1">
+          <mxGeometry x="470" y="150" width="220" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="s3fe" value="S3 frontend&#10;privado + OAC&#10;React / Vite" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e7f5ef;strokeColor=#0f6e56;" vertex="1" parent="1">
+          <mxGeometry x="160" y="280" width="200" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="apigw" value="API Gateway REST&#10;POST /api/simulate&#10;GET /api/jobs/{id}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ea;strokeColor=#b7791f;" vertex="1" parent="1">
+          <mxGeometry x="460" y="270" width="240" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="orch" value="Lambda orquestador&#10;valida y fija semilla&#10;demo síncrona ≤ 30" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#1d4e89;" vertex="1" parent="1">
+          <mxGeometry x="470" y="420" width="220" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="sfn" value="Step Functions&#10;Distributed Map&#10;concurrencia 20" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#1d4e89;" vertex="1" parent="1">
+          <mxGeometry x="760" y="420" width="200" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="sim" value="Lambda simulador&#10;SEIR + grafo&#10;estrategia, azar, nada" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#1d4e89;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="420" width="210" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="ddb" value="DynamoDB&#10;jobs / semilla / estado" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3f6fb;strokeColor=#1d4e89;" vertex="1" parent="1">
+          <mxGeometry x="180" y="600" width="200" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="s3r" value="S3 resultados&#10;curvas + JSON&#10;expira 14 días" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3f6fb;strokeColor=#1d4e89;" vertex="1" parent="1">
+          <mxGeometry x="470" y="590" width="220" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="cw" value="CloudWatch&#10;logs 7 días" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff1f0;strokeColor=#9d2c2c;" vertex="1" parent="1">
+          <mxGeometry x="760" y="590" width="180" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="budget" value="AWS Budgets&#10;alerta 50% / 100%" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff1f0;strokeColor=#9d2c2c;" vertex="1" parent="1">
+          <mxGeometry x="980" y="590" width="180" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" style="endArrow=block;html=1;" edge="1" parent="1" source="user" target="cf"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e2" style="endArrow=block;html=1;" edge="1" parent="1" source="cf" target="s3fe"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e3" style="endArrow=block;html=1;" edge="1" parent="1" source="cf" target="apigw"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e4" style="endArrow=block;html=1;" edge="1" parent="1" source="apigw" target="orch"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e5" style="endArrow=block;html=1;" edge="1" parent="1" source="orch" target="sfn"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e6" style="endArrow=block;html=1;" edge="1" parent="1" source="sfn" target="sim"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e7" style="endArrow=block;html=1;" edge="1" parent="1" source="orch" target="ddb"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e8" style="endArrow=block;html=1;" edge="1" parent="1" source="orch" target="s3r"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e9" style="endArrow=block;html=1;" edge="1" parent="1" source="sim" target="s3r"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
